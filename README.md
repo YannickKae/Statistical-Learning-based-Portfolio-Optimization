@@ -27,7 +27,7 @@ As far as I know, there is no other correct implementation of this methodology i
 - Graph depicting the cumulative returns of the securities and the optimized portfolio based on the used data.
 - Bar chart comparing the Sharpe ratios of the securities and the optimized portfolio.
 
-  The optimal linkage criterion is estimated based on the [agglomerative coefficient](http://strata.uga.edu/8370/lecturenotes/clusterAnalysis.html).
+The optimal linkage criterion is estimated based on the [agglomerative coefficient](http://strata.uga.edu/8370/lecturenotes/clusterAnalysis.html).
 
   ## Feature Pipeline
 
