@@ -1,0 +1,541 @@
+---
+title: "Test enviroment"
+author: "Yannick Kälber"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Data, echo=FALSE}
+
+library(quantmod)
+library(factoextra)
+library(cluster)
+
+ticker = c("VTSMX", "VGTSX", "VBMFX", "GLD", "GSG")
+
+m <- matrix(data = ticker, nrow = length(ticker), ncol = 1, dimnames = list(NULL, c("Ticker")))
+
+getSymbols(m[, 1], src = "yahoo", from = "1900-01-01")
+
+assets <- c()
+
+# Helper function to compute returns based on frequency
+compute_returns <- function(price_data, frequency) {
+  switch(frequency,
+         "daily" = dailyReturn(price_data),
+         "weekly" = {price_data <- price_data[.indexwday(price_data) == 5]
+                     weeklyReturn(price_data)},
+         "monthly" = monthlyReturn(price_data, leading = FALSE),
+         "quarterly" = quarterlyReturn(price_data, leading = FALSE),
+         "annual" = annualReturn(price_data, leading = FALSE),
+         stop("Invalid frequency"))
+}
+
+return_frequency <- "daily"  # Set your desired frequency here
+
+for (i in 1:length(m[, 1])) {
+  # Get returns
+  asset_returns <- compute_returns(get(m[i, 1])[, 6], return_frequency)
+
+  # Add to assets list
+  assets[[i]] <- asset_returns
+}
+
+return_matrix <- na.omit(do.call("merge.xts", assets))
+
+colnames(return_matrix) <- ticker
+
+```
+
+
+```{r Optimal Linkage, include=FALSE}
+
+transposed_xts <- t(return_matrix)
+
+#define linkage methods
+m <- c( "single", "average", "complete", "ward")
+names(m) <- c( "average", "single", "complete", "ward")
+
+#function to compute agglomerative coefficient
+ac <- function(x) {
+  agnes(transposed_xts, method = x)$ac
+}
+
+#calculate agglomerative coefficient for each clustering linkage method
+ac_values <- sapply(m, ac)
+
+# find the method with the highest agglomerative coefficient
+best_method <- names(which.max(ac_values))
+
+# now best_method is a string variable containing the name of the method with the highest score
+
+```
+
+
+
+```{r 1) Hierarchical Tree Clustering, echo=FALSE}
+
+#perform hierarchical clustering using Ward's minimum variance
+clust <- agnes(transposed_xts, method = best_method)
+
+#produce dendrogram
+pltree(clust, cex = 0.6, hang = -1, main = "Hierarchical Asset Structure") 
+
+```
+
+
+
+```{r 2) Selecting the Optimal Number of Clusters, echo=FALSE}
+
+# Define your clustering function
+mycluster <- function(x, k) {
+  d <- dist(x)
+  hc <- hclust(d, method = best_method) # specify the method here
+  cutree(hc, k = k)
+}
+
+# Determine the number of clusters
+K.max <- nrow(transposed_xts) -1
+
+# Initialize a list to store silhouette results
+sil_width <- numeric(K.max)
+
+# Compute the silhouette width for each number of clusters
+for (k in 2:K.max) {
+  cluster_assignments <- mycluster(transposed_xts, k)
+  sil_results <- silhouette(cluster_assignments, dist(transposed_xts))
+  sil_width[k] <- mean(sil_results[, 3]) # average silhouette width
+}
+
+# Find the number of clusters that has the maximum average silhouette width
+optimal_k <- which.max(sil_width)
+
+# Print the optimal number of clusters
+print(optimal_k)
+
+# Plot the silhouette width for each number of clusters
+plot(1:K.max, sil_width, xlab = "Number of clusters", ylab = "Average silhouette width", type = 'b')
+points(optimal_k, sil_width[optimal_k], col = "red", pch = 19, cex = 2)
+
+```
+
+
+```{r}
+
+#compute distance matrix
+d <- dist(transposed_xts)
+
+#perform hierarchical clustering using Ward's method
+final_clust <- hclust(d, method = best_method)
+
+#cut the dendrogram into 4 clusters
+groups <- cutree(final_clust, k=optimal_k)
+
+# Split the data by cluster assignments
+clustered_data <- split(row.names(transposed_xts), groups)
+
+# Print out the labels in each cluster
+for(i in 1:length(clustered_data)){
+  cat("Cluster", i, ":", "\n")
+  print(clustered_data[[i]])
+  cat("\n")
+}
+
+#produce dendrogram
+pltree(clust, cex = 0.6, hang = -1, main = "Hierarchical Asset Structure")
+
+# Mark clusters on the dendrogram
+rect.hclust(clust, k = optimal_k)
+
+```
+
+
+```{r Inverse Weighting, echo=FALSE}
+
+get_cluster_members <- function(node, dendrogram_structure) {
+  if (node < 0) {
+    return(-node)
+  } else {
+    left_members <- get_cluster_members(dendrogram_structure[node, 1], dendrogram_structure)
+    right_members <- get_cluster_members(dendrogram_structure[node, 2], dendrogram_structure)
+    return(c(left_members, right_members))
+  }
+}
+
+risk_contrib <- apply(return_matrix, 2, sd)
+
+cluster_weights <- c()
+cluster_members <- c()
+cluster_labels <- c()
+
+while (length(cluster_weights) < optimal_k) {
+  
+  if (length(cluster_weights) < 1) {
+    
+    # Get the children clusters
+    childs <- c()
+    childs <- final_clust$merge[nrow(final_clust$merge), ]
+    
+    rc_1 <- median(risk_contrib[get_cluster_members(childs[1], final_clust$merge)]) / (median(risk_contrib[get_cluster_members(childs[1], final_clust$merge)]) + median(risk_contrib[get_cluster_members(childs[2], final_clust$merge)]))
+    rc_2 <- 1-rc_1
+    
+    w_1 <- rc_2
+    w_2 <- rc_1
+    cluster_weights <- c(cluster_weights, w_1, w_2)
+    
+    m_1 <- get_cluster_members(childs[1], final_clust$merge)
+    m_2 <- get_cluster_members(childs[2], final_clust$merge)
+    cluster_members <- c(cluster_members, list(m_1), list(m_2))
+    
+    cluster_labels <- c(childs)
+    
+    old_max_row <- nrow(final_clust$merge)
+    new_max_row <- old_max_row - 1
+    
+  } else {
+    
+    col_num <- which(cluster_labels == new_max_row)
+    
+    childs <- c()
+    childs <- final_clust$merge[new_max_row, ]
+    
+    rc_1 <- median(risk_contrib[get_cluster_members(childs[1], final_clust$merge)]) / (median(risk_contrib[get_cluster_members(childs[1], final_clust$merge)]) + median(risk_contrib[get_cluster_members(childs[2], final_clust$merge)]))
+    rc_2 <- 1-rc_1
+    
+    m_1 <- get_cluster_members(childs[1], final_clust$merge)
+    m_2 <- get_cluster_members(childs[2], final_clust$merge)
+    
+    if (col_num == 1) {
+      
+      w_1 <- rc_2 * cluster_weights[1]  # calculate new w_1
+      w_2 <- cluster_weights[1] - w_1
+      cluster_weights <- c(w_1, w_2, cluster_weights[2:length(cluster_weights)])
+      
+      cluster_members <- c(list(m_1), list(m_2), cluster_members[2:length(cluster_members)])
+      
+      cluster_labels <- c(childs, cluster_labels[2:length(cluster_labels)])
+      
+    } else if (col_num == length(cluster_weights)) {
+      
+      w_1 <- rc_2 * cluster_weights[length(cluster_weights)]  # calculate new w_1
+      w_2 <- cluster_weights[length(cluster_weights)] - w_1
+      cluster_weights <- c(cluster_weights[1:(length(cluster_weights)-1)], w_1, w_2)
+      
+      cluster_members <- c(cluster_members[1:(length(cluster_members)-1)], list(m_1), list(m_2))
+      
+      cluster_labels <- c(cluster_labels[1:(length(cluster_labels)-1)], childs)
+      
+    } else {
+      
+      w_1 <- rc_2 * cluster_weights[col_num]  # calculate new w_1
+      w_2 <- cluster_weights[col_num] - w_1
+      cluster_weights <- c(cluster_weights[1:(length(cluster_weights)-1)], w_1, w_2, cluster_weights[(col_num + 1):length(cluster_weights)])
+      
+      cluster_members <- c(cluster_members[1:(length(cluster_members)-1)], list(m_1), list(m_2), cluster_members[(col_num + 1):length(cluster_members)])
+      
+      cluster_labels <- c(cluster_labels[1:(length(cluster_labels)-1)], childs, cluster_labels[(col_num + 1):length(cluster_labels)])
+      
+    }
+    
+    old_max_row <- new_max_row
+    new_max_row <- old_max_row - 1
+    
+    col_num <- 1
+
+  }
+}
+
+print(cluster_weights)
+print(cluster_members)
+
+```
+
+```{r Equal Weighting, echo=FALSE}
+
+get_cluster_members <- function(node, dendrogram_structure) {
+  if (node < 0) {
+    return(-node)
+  } else {
+    left_members <- get_cluster_members(dendrogram_structure[node, 1], dendrogram_structure)
+    right_members <- get_cluster_members(dendrogram_structure[node, 2], dendrogram_structure)
+    return(c(left_members, right_members))
+  }
+}
+
+risk_contrib <- apply(return_matrix, 2, sd)
+# Save the names from the original risk_contrib
+asset_names <- names(risk_contrib)
+# Set all risk contributions to 1
+risk_contrib <- rep(1, length(asset_names))
+# Reassign the names to the risk_contrib vector
+names(risk_contrib) <- asset_names
+
+
+cluster_weights <- c()
+cluster_members <- c()
+cluster_labels <- c()
+
+while (length(cluster_weights) < optimal_k) {
+  
+  if (length(cluster_weights) < 1) {
+    
+    # Get the children clusters
+    childs <- c()
+    childs <- final_clust$merge[nrow(final_clust$merge), ]
+    
+    rc_1 <- median(risk_contrib[get_cluster_members(childs[1], final_clust$merge)]) / (median(risk_contrib[get_cluster_members(childs[1], final_clust$merge)]) + median(risk_contrib[get_cluster_members(childs[2], final_clust$merge)]))
+    rc_2 <- 1-rc_1
+    
+    w_1 <- rc_2
+    w_2 <- rc_1
+    cluster_weights <- c(cluster_weights, w_1, w_2)
+    
+    m_1 <- get_cluster_members(childs[1], final_clust$merge)
+    m_2 <- get_cluster_members(childs[2], final_clust$merge)
+    cluster_members <- c(cluster_members, list(m_1), list(m_2))
+    
+    cluster_labels <- c(childs)
+    
+    old_max_row <- nrow(final_clust$merge)
+    new_max_row <- old_max_row - 1
+    
+  } else {
+    
+    col_num <- which(cluster_labels == new_max_row)
+    
+    childs <- c()
+    childs <- final_clust$merge[new_max_row, ]
+    
+    rc_1 <- median(risk_contrib[get_cluster_members(childs[1], final_clust$merge)]) / (median(risk_contrib[get_cluster_members(childs[1], final_clust$merge)]) + median(risk_contrib[get_cluster_members(childs[2], final_clust$merge)]))
+    rc_2 <- 1-rc_1
+    
+    m_1 <- get_cluster_members(childs[1], final_clust$merge)
+    m_2 <- get_cluster_members(childs[2], final_clust$merge)
+    
+    if (col_num == 1) {
+      
+      w_1 <- rc_2 * cluster_weights[1]  # calculate new w_1
+      w_2 <- cluster_weights[1] - w_1
+      cluster_weights <- c(w_1, w_2, cluster_weights[2:length(cluster_weights)])
+      
+      cluster_members <- c(list(m_1), list(m_2), cluster_members[2:length(cluster_members)])
+      
+      cluster_labels <- c(childs, cluster_labels[2:length(cluster_labels)])
+      
+    } else if (col_num == length(cluster_weights)) {
+      
+      w_1 <- rc_2 * cluster_weights[length(cluster_weights)]  # calculate new w_1
+      w_2 <- cluster_weights[length(cluster_weights)] - w_1
+      cluster_weights <- c(cluster_weights[1:(length(cluster_weights)-1)], w_1, w_2)
+      
+      cluster_members <- c(cluster_members[1:(length(cluster_members)-1)], list(m_1), list(m_2))
+      
+      cluster_labels <- c(cluster_labels[1:(length(cluster_labels)-1)], childs)
+      
+    } else {
+      
+      w_1 <- rc_2 * cluster_weights[col_num]  # calculate new w_1
+      w_2 <- cluster_weights[col_num] - w_1
+      cluster_weights <- c(cluster_weights[1:(length(cluster_weights)-1)], w_1, w_2, cluster_weights[(col_num + 1):length(cluster_weights)])
+      
+      cluster_members <- c(cluster_members[1:(length(cluster_members)-1)], list(m_1), list(m_2), cluster_members[(col_num + 1):length(cluster_members)])
+      
+      cluster_labels <- c(cluster_labels[1:(length(cluster_labels)-1)], childs, cluster_labels[(col_num + 1):length(cluster_labels)])
+      
+    }
+    
+    old_max_row <- new_max_row
+    new_max_row <- old_max_row - 1
+    
+    col_num <- 1
+
+  }
+}
+
+print(cluster_weights)
+print(cluster_members)
+
+```
+
+
+
+```{r}
+
+# Compute distance matrix
+d <- dist(transposed_xts)
+
+# Perform hierarchical clustering using Ward's method
+final_clust <- hclust(d, method = best_method)
+
+# Cut the dendrogram into optimal_k clusters
+groups <- cutree(final_clust, k=optimal_k)
+
+# Split the data by cluster assignments
+clustered_data <- split(row.names(transposed_xts), groups)
+
+# Compute cluster weights and members (your existing code)
+# Add here your cluster_weights and cluster_members computation
+
+# Print out the labels in each cluster along with weights
+for(i in 1:length(cluster_members)){
+  cat("Cluster", i, ":", "\n")
+  cat("Members:\n")
+  print(colnames(return_matrix)[unlist(cluster_members[[i]])])
+  cat("Weight:\n")
+  print(cluster_weights[i])
+  cat("\n")
+}
+
+```
+
+
+```{r}
+
+# Calculate naive risk parity weights within each cluster
+naive_risk_parity <- function(cluster, risk_contrib) {
+  cluster_risk_contrib <- risk_contrib[cluster]
+  inverse_risk <- 1 / cluster_risk_contrib
+  nrp_weights <- inverse_risk / sum(inverse_risk)
+  return(nrp_weights)
+}
+
+# Calculate final asset weights
+final_weights <- list()
+for(i in 1:length(cluster_members)){
+  # Use column names to transform the numeric identifiers back to original labels
+  cluster <- colnames(return_matrix)[unlist(cluster_members[[i]])]
+  nrp_weights <- naive_risk_parity(cluster, risk_contrib)
+  final_weights[[i]] <- nrp_weights * cluster_weights[i]
+}
+
+# Convert the list of weights into a single vector
+final_weights <- unlist(final_weights)
+
+# Print final asset weights
+print(final_weights)
+
+```
+
+```{r}
+
+risk_contrib <- apply(return_matrix, 2, sd)
+# Save the names from the original risk_contrib
+asset_names <- names(risk_contrib)
+# Set all risk contributions to 1
+risk_contrib <- rep(1, length(asset_names))
+# Reassign the names to the risk_contrib vector
+names(risk_contrib) <- asset_names
+
+# Calculate naive risk parity weights within each cluster
+naive_risk_parity <- function(cluster, risk_contrib) {
+  cluster_risk_contrib <- risk_contrib[cluster]
+  inverse_risk <- 1 / cluster_risk_contrib
+  nrp_weights <- inverse_risk / sum(inverse_risk)
+  return(nrp_weights)
+}
+
+# Calculate final asset weights
+final_weights <- list()
+for(i in 1:length(cluster_members)){
+  # Use column names to transform the numeric identifiers back to original labels
+  cluster <- colnames(return_matrix)[unlist(cluster_members[[i]])]
+  nrp_weights <- naive_risk_parity(cluster, risk_contrib)
+  final_weights[[i]] <- nrp_weights * cluster_weights[i]
+}
+
+# Convert the list of weights into a single vector
+final_weights <- unlist(final_weights)
+
+# Print final asset weights
+print(final_weights)
+
+```
+
+
+```{r Pie Chart, echo=FALSE}
+library(ggplot2)
+
+# Create a dataframe from the final_weights object
+df <- as.data.frame(final_weights)
+
+# Set labels for the pie chart
+labels <- rownames(df)
+
+# Set values for the pie chart
+values <- df$final_weights
+
+# Create a data frame with labels and values
+pie_data <- data.frame(labels, values)
+
+# Sort the data frame by values in descending order
+pie_data <- pie_data[order(pie_data$values, decreasing = TRUE), ]
+
+# Create the pie chart
+chart <- ggplot(pie_data, aes(x = "", y = values, fill = labels)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  scale_fill_hue() +
+  theme_void()
+
+# Display the pie chart
+print(chart)
+
+```
+
+```{r}
+
+# Assuming that return_matrix has the returns of each asset
+
+# Multiply each asset's returns by its weight
+weighted_returns <- return_matrix * final_weights
+
+# Sum up to get portfolio return at each time point
+portfolio_returns <- rowSums(weighted_returns)
+
+# New XTS
+Portfolio <- return_matrix
+
+# Add to your data as a new column
+Portfolio$Portfolio_Returns <- portfolio_returns
+
+# Print the new return_matrix with portfolio returns
+plot(Portfolio)
+
+
+```
+
+```{r}
+
+# Calculate cumulative returns by adding 1 to the returns, calculating the cumulative product, then subtracting 1
+cumulative_returns <- cumprod(1 + Portfolio)
+
+# Convert it to xts object if needed
+cumulative_returns <- as.xts(cumulative_returns)
+
+# Print the new object with cumulative returns
+#print(cumulative_returns)
+
+# Plot the cumulative returns with log y-axis
+plot(cumulative_returns, log = "y", main="Cumulative Returns")
+
+```
+
+```{r}
+
+# Calculate mean of each column
+mean_returns <- apply(Portfolio, 2, mean)
+
+# Calculate standard deviation of each column
+sd_returns <- apply(Portfolio, 2, sd)
+
+# Calculate Sharpe Ratio for each column
+sharpe_ratio <- mean_returns / sd_returns
+
+# Print the Sharpe Ratio for each column
+print(sharpe_ratio)
+
+# Plot Sharpe Ratios
+barplot(sharpe_ratio, main = "Sharpe Ratio", xlab = "Assets", ylab = "Sharpe Ratio")
+
+```
+
