@@ -36,5 +36,5 @@ The optimal linkage criterion is estimated based on the [agglomerative coefficie
 - Possibility to upload your own data as a csv file.
 - More risk metrics, such as [Conditional Drawdown at Risk](https://breakingdownfinance.com/finance-topics/alternative-investments/conditional-drawdown-at-risk-cdar/) (CDAR)
 - Risk-affine weighting
-- Shrinkage, denoising and detonation possibilities for the dependency matrix
+- Shrinkage, denoising and detoning possibilities for the dependency matrix
 - Further dependency metrics, such as [mutual information](https://en.wikipedia.org/wiki/Mutual_information).
