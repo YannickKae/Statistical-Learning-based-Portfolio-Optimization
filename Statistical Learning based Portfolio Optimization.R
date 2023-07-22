@@ -17,6 +17,7 @@ library(factoextra)
 library(dendextend)
 library(cluster)
 library(RColorBrewer)
+library(shinybusy)
 
 # User Interface
 ui <- fluidPage(
@@ -51,7 +52,8 @@ ui <- fluidPage(
                   choices = c("Risk Weighted" = "risk", "Equally Weighted" = "equally")),
       actionButton("submit", "Optimize"),
       tags$style(type='text/css', "#info-text { margin-top: 40px; }"),
-      HTML("<p id='info-text'>This web application utilizes the <a href='https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3237540' target='_blank'>Hierarchical Equal Risk Contribution</a> (HERC) approach, a modern portfolio optimization method developed by Raffinot (2018). It combines the unique strengths of the pioneering <a href='https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2708678' target='_blank'>Hierarchical Risk Parity</a> (HRP) method by López de Prado (2016) and <a href='https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2840729' target='_blank'>Hierarchical Clustering-Based Asset Allocation</a> (HCAA) method by Raffinot (2017).<br><br>
+      HTML("<p id='info-text'><b>Recommendation:</b> It is recommended to use this application on a desktop for the best user experience.<br><br>
+This web application utilizes the <a href='https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3237540' target='_blank'>Hierarchical Equal Risk Contribution</a> (HERC) approach, a modern portfolio optimization method developed by Raffinot (2018). It combines the unique strengths of the pioneering <a href='https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2708678' target='_blank'>Hierarchical Risk Parity</a> (HRP) method by López de Prado (2016) and <a href='https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2840729' target='_blank'>Hierarchical Clustering-Based Asset Allocation</a> (HCAA) method by Raffinot (2017).<br><br>
 
 Traditional portfolio optimization suffers from significant instability, primarily due to treating the vector space of return series as a fully connected graph, where each node can potentially substitute for another. This complicated structure magnifies minute estimation errors, leading to unstable solutions.
 Hierarchical clustering-based tree structures address this issue by eliminating irrelevant links.<br><br><br>
@@ -65,14 +67,14 @@ Hierarchical clustering-based tree structures address this issue by eliminating 
 <b>Output:</b><br><br>
 
 On the right panel, you will find:</b><br>
-1) A labelled pie chart representing the optimized portfolio.<br>
-2) A table listing each security's portfolio weight and cluster membership.<br>
-3) A dendrogram illustrating the hierarchical structure of the securities.<br>
+1) A dendrogram illustrating the hierarchical structure of the securities.<br>
+2) A labelled pie chart representing the optimized portfolio.<br>
+3) A table listing each security's portfolio weight and cluster membership.<br>
 4) A graph depicting the cumulative returns of the securities and the optimized portfolio based on the used data.<br>
 5) A bar chart comparing the Sharpe ratios of the securities and the optimized portfolio.<br><br>
 
-The application automatically identifies the optimal clustering method.<br><br><br>
-For more information on this and my other projects, please visit my <a href='https://github.com/YannickKae' target='_blank'>GitHub profile</a>.</p>")
+The application automatically identifies the optimal linkage method.<br><br><br>
+For more information on this and my other projects, please visit my <a href='https://github.com/YannickKae/Statistical-Learning-based-Portfolio-Optimization' target='_blank'>GitHub</a>.</p>")
     ),
     
     mainPanel(
@@ -91,7 +93,10 @@ For more information on this and my other projects, please visit my <a href='htt
 server <- function(input, output) {
   
   observeEvent(input$submit, {
+    
     req(input$input_matrix)
+    
+    show_modal_spinner(color = "white") # show the modal window
     
     ######################## Step 1) gathering the Data ###############################
     
@@ -556,6 +561,8 @@ server <- function(input, output) {
               axis.text = element_text(size = 14),  # Adjust axis text size
               axis.title = element_text(size = 14))  # Adjust axis title size
     })
+    
+    remove_modal_spinner() # remove it when done
     
   })
 }
