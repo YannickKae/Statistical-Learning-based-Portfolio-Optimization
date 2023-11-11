@@ -38,3 +38,4 @@ The optimal linkage criterion is estimated based on the [agglomerative coefficie
 - Risk-affine weighting
 - Shrinkage, denoising and detoning possibilities for the dependency matrix
 - Further dependency metrics, such as [mutual information](https://en.wikipedia.org/wiki/Mutual_information).
+- Possibility to also enter short positions.
